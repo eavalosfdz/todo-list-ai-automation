@@ -1,6 +1,8 @@
 export interface TodoItem {
     id: number;
     text: string;
+    description?: string;
+    priority: boolean;
     completed: boolean;
     created_at?: string;
     updated_at?: string;
@@ -13,6 +15,8 @@ export interface Database {
                 Row: {
                     id: number;
                     text: string;
+                    description: string | null;
+                    priority: boolean;
                     completed: boolean;
                     created_at: string;
                     updated_at: string;
@@ -20,6 +24,8 @@ export interface Database {
                 Insert: {
                     id?: number;
                     text: string;
+                    description?: string | null;
+                    priority?: boolean;
                     completed?: boolean;
                     created_at?: string;
                     updated_at?: string;
@@ -27,6 +33,8 @@ export interface Database {
                 Update: {
                     id?: number;
                     text?: string;
+                    description?: string | null;
+                    priority?: boolean;
                     completed?: boolean;
                     created_at?: string;
                     updated_at?: string;

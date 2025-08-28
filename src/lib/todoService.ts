@@ -18,15 +18,53 @@ export const todoService = {
     },
 
     // Add a new todo
-    async addTodo(text: string): Promise<TodoItem> {
+    async addTodo(
+        text: string,
+        description?: string,
+        priority?: boolean
+    ): Promise<TodoItem> {
         const { data, error } = await supabase
             .from("todos")
-            .insert([{ text, completed: false }])
+            .insert([
+                {
+                    text,
+                    description: description || null,
+                    priority: priority || false,
+                    completed: false,
+                },
+            ])
             .select()
             .single();
 
         if (error) {
             console.error("Error adding todo:", error);
+            throw error;
+        }
+
+        return data;
+    },
+
+    // Edit a todo
+    async editTodo(
+        id: number,
+        text: string,
+        description?: string,
+        priority?: boolean
+    ): Promise<TodoItem> {
+        const { data, error } = await supabase
+            .from("todos")
+            .update({
+                text,
+                description: description || null,
+                priority: priority || false,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error("Error editing todo:", error);
             throw error;
         }
 
