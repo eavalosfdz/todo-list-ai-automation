@@ -1,12 +1,20 @@
 import { supabase } from "./supabase";
 import { TodoItem } from "@/types/todo";
+import { n8nService } from "./n8nService";
+import { userService } from "./userService";
 
 export const todoService = {
-    // Get all todos
+    // Get all todos for current user
     async getTodos(): Promise<TodoItem[]> {
+        const userId = userService.getCurrentUserId();
+        if (!userId) {
+            throw new Error("User not logged in");
+        }
+
         const { data, error } = await supabase
             .from("todos")
             .select("*")
+            .eq("user_id", userId)
             .order("created_at", { ascending: false });
 
         if (error) {
@@ -23,6 +31,11 @@ export const todoService = {
         description?: string,
         priority?: boolean
     ): Promise<TodoItem> {
+        const userId = userService.getCurrentUserId();
+        if (!userId) {
+            throw new Error("User not logged in");
+        }
+
         const { data, error } = await supabase
             .from("todos")
             .insert([
@@ -31,6 +44,7 @@ export const todoService = {
                     description: description || null,
                     priority: priority || false,
                     completed: false,
+                    user_id: userId,
                 },
             ])
             .select()
@@ -39,6 +53,29 @@ export const todoService = {
         if (error) {
             console.error("Error adding todo:", error);
             throw error;
+        }
+
+        // Trigger AI description generation if n8n is enabled and no description provided
+        if (n8nService.isEnabled() && !description) {
+            try {
+                const webhookUrl = n8nService.getWebhookUrl();
+                if (webhookUrl) {
+                    // Trigger AI description generation asynchronously
+                    n8nService
+                        .generateDescription(data, webhookUrl)
+                        .catch((error) => {
+                            console.warn(
+                                "AI description generation failed:",
+                                error
+                            );
+                        });
+                }
+            } catch (error) {
+                console.warn(
+                    "Failed to trigger AI description generation:",
+                    error
+                );
+            }
         }
 
         return data;

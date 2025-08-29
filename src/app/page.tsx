@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { TodoItem } from '@/types/todo';
+import { TodoItem, User } from '@/types/todo';
 import { todoService } from '@/lib/todoService';
+import { userService } from '@/lib/userService';
+import LoginForm from '@/components/LoginForm';
 
 export default function Home() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -14,6 +16,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [titleError, setTitleError] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState<number | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   // Edit modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -31,12 +35,27 @@ export default function Home() {
     }
   }, [darkMode]);
 
-  // Load todos on component mount
+  // Check for existing user session on component mount
   useEffect(() => {
-    loadTodos();
+    const user = userService.getCurrentUser();
+    if (user) {
+      setCurrentUser(user);
+      loadTodos();
+    } else {
+      setLoading(false);
+    }
   }, []);
 
+  // Load todos when user is set
+  useEffect(() => {
+    if (currentUser) {
+      loadTodos();
+    }
+  }, [currentUser]);
+
   const loadTodos = async () => {
+    if (!currentUser) return;
+
     try {
       setLoading(true);
       setError(null);
@@ -48,6 +67,18 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+    setError(null);
+  };
+
+  const handleLogout = () => {
+    userService.logoutUser();
+    setCurrentUser(null);
+    setTodos([]);
+    setError(null);
   };
 
   const addTodo = async () => {
@@ -65,6 +96,13 @@ export default function Home() {
       setNewTodo('');
       setNewDescription('');
       setNewPriority(false);
+
+      // Show AI generating indicator if no description was provided
+      if (!newDescription.trim()) {
+        setAiGenerating(todo.id);
+        // Hide the indicator after 5 seconds (AI should have updated by then)
+        setTimeout(() => setAiGenerating(null), 5000);
+      }
     } catch (err) {
       setError('Failed to add todo. Please try again.');
       console.error('Error adding todo:', err);
@@ -160,6 +198,11 @@ export default function Home() {
   const activeTodos = todos.filter((todo) => !todo.completed);
   const completedTodos = todos.filter((todo) => todo.completed);
 
+  // Show login form if user is not logged in
+  if (!currentUser) {
+    return <LoginForm onLogin={handleLogin} darkMode={darkMode} />;
+  }
+
   if (loading) {
     return (
       <div className={`min-h-screen transition-colors duration-200 ${darkMode
@@ -185,31 +228,46 @@ export default function Home() {
       <div className="max-w-md w-full">
         <div className={`rounded-lg shadow-lg p-6 transition-colors duration-200 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
           }`}>
-          {/* Header with Dark Mode Toggle */}
+          {/* Header with User Info and Controls */}
           <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-bold text-center flex-1">
-              Eduardo&apos;s Todo List
-            </h1>
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className={`p-2 rounded-lg transition-colors duration-200 ${darkMode
-                ? 'bg-gray-700 hover:bg-gray-600 text-yellow-400'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-                }`}
-              aria-label="Toggle dark mode"
-            >
-              {darkMode ? (
-                // Sun icon for dark mode
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              ) : (
-                // Moon icon for light mode
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-            </button>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold">
+                Todo List
+              </h1>
+              <div className={`px-3 py-1 rounded-full text-sm font-medium ${darkMode ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'
+                }`}>
+                {currentUser.username}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className={`p-2 rounded-lg transition-colors duration-200 ${darkMode
+                  ? 'bg-gray-700 hover:bg-gray-600 text-yellow-400'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                aria-label="Toggle dark mode"
+              >
+                {darkMode ? (
+                  // Sun icon for dark mode
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  // Moon icon for light mode
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={handleLogout}
+                className={`px-3 py-2 rounded-lg transition-colors duration-200 ${darkMode ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'
+                  } text-white text-sm font-medium`}
+              >
+                Logout
+              </button>
+            </div>
           </div>
 
           {/* Error Messages */}
@@ -346,6 +404,15 @@ export default function Home() {
                         {todo.description}
                       </span>
                     )}
+                    {aiGenerating === todo.id && (
+                      <div className="flex items-center mt-1 text-xs text-blue-500">
+                        <svg className="animate-spin -ml-1 mr-2 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        AI generating description...
+                      </div>
+                    )}
                   </div>
 
                   {/* Edit Button */}
@@ -480,6 +547,15 @@ export default function Home() {
                             }`}>
                             {todo.description}
                           </span>
+                        )}
+                        {aiGenerating === todo.id && (
+                          <div className="flex items-center mt-1 text-xs text-blue-500">
+                            <svg className="animate-spin -ml-1 mr-2 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            AI generating description...
+                          </div>
                         )}
                       </div>
 
