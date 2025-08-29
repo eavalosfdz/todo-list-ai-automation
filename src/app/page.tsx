@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { TodoItem, User } from '@/types/todo';
 import { todoService } from '@/lib/todoService';
 import { userService } from '@/lib/userService';
@@ -12,12 +12,14 @@ export default function Home() {
   const [newDescription, setNewDescription] = useState('');
   const [newPriority, setNewPriority] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Set<number>>(new Set());
   const [darkMode, setDarkMode] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [titleError, setTitleError] = useState(false);
   const [aiGenerating, setAiGenerating] = useState<number | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Edit modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -35,25 +37,7 @@ export default function Home() {
     }
   }, [darkMode]);
 
-  // Check for existing user session on component mount
-  useEffect(() => {
-    const user = userService.getCurrentUser();
-    if (user) {
-      setCurrentUser(user);
-      loadTodos();
-    } else {
-      setLoading(false);
-    }
-  }, []);
-
-  // Load todos when user is set
-  useEffect(() => {
-    if (currentUser) {
-      loadTodos();
-    }
-  }, [currentUser]);
-
-  const loadTodos = async () => {
+  const loadTodos = useCallback(async () => {
     if (!currentUser) return;
 
     try {
@@ -67,6 +51,100 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }, [currentUser]);
+
+  // Check for existing user session on component mount
+  useEffect(() => {
+    const user = userService.getCurrentUser();
+    if (user) {
+      setCurrentUser(user);
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load todos when user is set
+  useEffect(() => {
+    if (currentUser) {
+      loadTodos();
+    }
+  }, [currentUser, loadTodos]);
+
+  // Cleanup polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [pollingInterval]);
+
+  // Handle escape key to close modal
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && editModalOpen) {
+        closeEditModal();
+      }
+    };
+
+    if (editModalOpen) {
+      document.addEventListener('keydown', handleEscape);
+      return () => document.removeEventListener('keydown', handleEscape);
+    }
+  }, [editModalOpen]);
+
+  const toggleDescriptionExpanded = (todoId: number) => {
+    setExpandedDescriptions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(todoId)) {
+        newSet.delete(todoId);
+      } else {
+        newSet.add(todoId);
+      }
+      return newSet;
+    });
+  };
+
+  const startPollingForUpdates = (todoId: number) => {
+    // Clear any existing polling interval
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+    }
+
+    // Start polling every 3 seconds for 30 seconds max
+    let pollCount = 0;
+    const maxPolls = 10; // 30 seconds max (3s * 10)
+
+    const interval = setInterval(async () => {
+      pollCount++;
+
+      try {
+        const data = await todoService.getTodos();
+        const updatedTodo = data.find(todo => todo.id === todoId);
+
+        if (updatedTodo && updatedTodo.description && updatedTodo.description.trim() !== '') {
+          // Description has been updated! Update the todos, expand the description, and stop polling
+          setTodos(data);
+          setExpandedDescriptions(prev => new Set(prev).add(todoId));
+          setAiGenerating(null);
+          clearInterval(interval);
+          setPollingInterval(null);
+          return;
+        }
+
+        // Stop polling after max attempts
+        if (pollCount >= maxPolls) {
+          setAiGenerating(null);
+          clearInterval(interval);
+          setPollingInterval(null);
+        }
+      } catch (error) {
+        console.error('Error during polling:', error);
+        // Continue polling even if there's an error
+      }
+    }, 3000); // Poll every 3 seconds
+
+    setPollingInterval(interval);
   };
 
   const handleLogin = (user: User) => {
@@ -97,11 +175,10 @@ export default function Home() {
       setNewDescription('');
       setNewPriority(false);
 
-      // Show AI generating indicator if no description was provided
+      // Show AI generating indicator and start polling if no description was provided
       if (!newDescription.trim()) {
         setAiGenerating(todo.id);
-        // Hide the indicator after 5 seconds (AI should have updated by then)
-        setTimeout(() => setAiGenerating(null), 5000);
+        startPollingForUpdates(todo.id);
       }
     } catch (err) {
       setError('Failed to add todo. Please try again.');
@@ -375,6 +452,7 @@ export default function Home() {
             ) : (
               activeTodos.map((todo) => (
                 <div
+                  onDoubleClick={() => openEditModal(todo)}
                   key={todo.id}
                   className={`flex items-start gap-3 p-4 rounded-lg border transition-all duration-200 ${todo.priority
                     ? 'border-red-300 bg-red-50'
@@ -397,18 +475,44 @@ export default function Home() {
                           Priority
                         </span>
                       )}
+
                     </div>
                     {todo.description && (
-                      <span className={`block text-sm transition-colors duration-200 ${darkMode ? 'text-gray-400' : 'text-gray-600'
-                        }`}>
-                        {todo.description}
-                      </span>
+                      <div className="mt-1 flex items-center gap-2" onClick={() => toggleDescriptionExpanded(todo.id)}>
+                        <span className={`text-sm transition-colors duration-200 ${darkMode ? 'text-gray-400' : 'text-gray-600'
+                          }`}>
+                          {expandedDescriptions.has(todo.id) ? todo.description : (
+                            todo.description.length > 50
+                              ? `${todo.description.substring(0, 50)}...`
+                              : todo.description
+                          )}
+                        </span>
+                        {todo.description.length > 50 && (
+                          <button
+                            onClick={() => toggleDescriptionExpanded(todo.id)}
+                            className={`inline-flex items-center text-xs transition-colors duration-200 ${darkMode
+                              ? 'text-gray-500 hover:text-gray-300'
+                              : 'text-gray-400 hover:text-gray-600'
+                              }`}
+                            aria-label={expandedDescriptions.has(todo.id) ? "Show less" : "Show more"}
+                          >
+                            <svg
+                              className={`w-3 h-3 transition-transform duration-200 ${expandedDescriptions.has(todo.id) ? 'rotate-180' : ''}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     )}
                     {aiGenerating === todo.id && (
                       <div className="flex items-center mt-1 text-xs text-blue-500">
                         <svg className="animate-spin -ml-1 mr-2 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                         AI generating description...
                       </div>
@@ -541,12 +645,56 @@ export default function Home() {
                               Priority
                             </span>
                           )}
+                          {(todo.description || aiGenerating === todo.id) && (
+                            <button
+                              onClick={() => toggleDescriptionExpanded(todo.id)}
+                              className={`p-1 rounded transition-colors duration-200 ${darkMode
+                                ? 'text-gray-500 hover:text-gray-300'
+                                : 'text-gray-400 hover:text-gray-600'
+                                }`}
+                              aria-label={expandedDescriptions.has(todo.id) ? "Hide description" : "Show description"}
+                            >
+                              <svg
+                                className={`w-4 h-4 transition-transform duration-200 ${expandedDescriptions.has(todo.id) ? 'rotate-180' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          )}
                         </div>
                         {todo.description && (
-                          <span className={`block text-sm line-through transition-colors duration-200 ${darkMode ? 'text-gray-500' : 'text-gray-400'
-                            }`}>
-                            {todo.description}
-                          </span>
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className={`text-sm line-through transition-colors duration-200 ${darkMode ? 'text-gray-500' : 'text-gray-400'
+                              }`}>
+                              {expandedDescriptions.has(todo.id) ? todo.description : (
+                                todo.description.length > 50
+                                  ? `${todo.description.substring(0, 50)}...`
+                                  : todo.description
+                              )}
+                            </span>
+                            {todo.description.length > 50 && (
+                              <button
+                                onClick={() => toggleDescriptionExpanded(todo.id)}
+                                className={`inline-flex items-center text-xs transition-colors duration-200 ${darkMode
+                                  ? 'text-gray-500 hover:text-gray-300'
+                                  : 'text-gray-400 hover:text-gray-600'
+                                  }`}
+                                aria-label={expandedDescriptions.has(todo.id) ? "Show less" : "Show more"}
+                              >
+                                <svg
+                                  className={`w-3 h-3 transition-transform duration-200 ${expandedDescriptions.has(todo.id) ? 'rotate-180' : ''}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         )}
                         {aiGenerating === todo.id && (
                           <div className="flex items-center mt-1 text-xs text-blue-500">
@@ -653,9 +801,19 @@ export default function Home() {
       </div>
 
       {/* Edit Modal */}
-      {editModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className={`max-w-md w-full rounded-lg shadow-lg p-6 transition-colors duration-200 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'}`}>
+      {editModalOpen && (<div>
+
+        <div className="fixed inset-0 bg-black opacity-30 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in duration-200">
+        </div>
+
+        <div
+          className="fixed inset-0 bg-opacity-30 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={closeEditModal}
+        >
+          <div
+            className={`max-w-md w-full rounded-lg shadow-xl p-6 transition-all duration-200 animate-in zoom-in-95 ${darkMode ? 'bg-gray-800 text-white border border-gray-700' : 'bg-white text-gray-800 border border-gray-200'}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Edit Todo</h2>
               <button
@@ -742,6 +900,7 @@ export default function Home() {
             </div>
           </div>
         </div>
+      </div>
       )}
     </div>
   );
