@@ -7,7 +7,7 @@ interface UpdateDescriptionRequest {
 interface UpdateDescriptionResponse {
     success: boolean;
     message: string;
-    todo?: any;
+    todo?: unknown;
     error?: string;
     timestamp?: string;
 }
@@ -67,7 +67,7 @@ export const aiDescriptionService = {
      * Health check for the AI Description API
      * @returns Promise with the health check response
      */
-    async healthCheck(): Promise<any> {
+    async healthCheck(): Promise<unknown> {
         try {
             const response = await fetch("/api/ai-description", {
                 method: "GET",
